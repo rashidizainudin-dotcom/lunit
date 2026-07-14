@@ -6,6 +6,24 @@
 
 set +e
 
+# Everything below (apt, /var/log, /opt/lunit, systemctl, docker) needs
+# root. Check explicitly and fail with a clear message instead of
+# letting the first apt/log-write fail with a confusing permission error.
+if [ "$EUID" -ne 0 ]
+then
+    echo "This script must be run as root. Try: sudo bash $0"
+    exit 1
+fi
+
+# Force apt to never wait on an interactive prompt (debconf dialogs,
+# "which services should be restarted" from needrestart, etc). This
+# is what most commonly makes an "apt install" step look like it's
+# frozen at N minutes elapsed when it's actually stuck waiting for
+# input that will never come in an unattended/backgrounded run.
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+
 LOG="/var/log/lunit-deployment.log"
 
 # FIX #2: show output on the terminal AND log it (previously tee's
@@ -68,7 +86,7 @@ spin_run()
         echo "=== $desc ==="
     } >> "$LOG"
 
-    "$@" >> "$LOG" 2>&1 &
+    "$@" >> "$LOG" 2>&1 < /dev/null &
     local pid=$!
 
     local spin='|/-\'
@@ -156,6 +174,7 @@ PACKAGES=(
     tar
     unzip
     docker.io
+    docker-compose
     docker-compose-plugin
 )
 
@@ -165,7 +184,28 @@ for PACKAGE in "${PACKAGES[@]}"
 do
     if spin_run "Installing $PACKAGE" apt install -y "$PACKAGE"
     then
-        echo "[✓] $PACKAGE"
+        # Show the installed version right on the tick line for the
+        # Docker-related packages, so it's obvious what actually
+        # landed on the machine (useful for support/debugging later).
+        VERSION_INFO=""
+        case "$PACKAGE" in
+            docker.io)
+                VERSION_INFO=$(docker --version 2>/dev/null)
+                ;;
+            docker-compose)
+                VERSION_INFO=$(docker-compose --version 2>/dev/null)
+                ;;
+            docker-compose-plugin)
+                VERSION_INFO=$(docker compose version 2>/dev/null)
+                ;;
+        esac
+
+        if [ -n "$VERSION_INFO" ]
+        then
+            echo "[✓] $PACKAGE — $VERSION_INFO"
+        else
+            echo "[✓] $PACKAGE"
+        fi
     else
         echo "[!] $PACKAGE failed"
         DEP_FAILED=1
@@ -408,24 +448,66 @@ task_start "Installing Insight Board"
 
 mkdir -p /opt/lunit/conf/insight-board
 
-cp insight-board-1.2.3.tar /opt/lunit/conf/insight-board/
+# Move (not copy) the tarball into place, matching the manual
+# procedure — leaves lunit-files clean instead of a duplicate copy.
+mv "$USER_HOME/lunit-files/insight-board-1.2.3.tar" /opt/lunit/conf/insight-board/
 
 cd /opt/lunit/conf/insight-board || task_failed_fatal "cd into /opt/lunit/conf/insight-board"
 
-spin_run "Extracting Insight Board archive" tar xvf insight-board-1.2.3.tar
+spin_run "Extracting Insight Board archive" tar xvf insight-board-1.2.3.tar -C /opt/lunit/conf/insight-board
 
-for F in docker_images/*
+for F in /opt/lunit/conf/insight-board/docker_images/*
 do
     spin_run "Loading docker image: $(basename "$F")" docker load -i "$F"
 done
 
-rm -rf docker_images
+rm -rf /opt/lunit/conf/insight-board/docker_images/
 
-mv template.docker-compose.yml docker-compose.yml
+COMPOSE_FILE="/opt/lunit/conf/insight-board/docker-compose.yml"
 
-sed -i 's/# profiles: \[mmg\]/profiles: [mmg]/' docker-compose.yml
+# The archive doesn't always name this file the same way — sometimes
+# it extracts straight to docker-compose.yml, sometimes it needs
+# renaming from template.docker-compose.yml. Handle both instead of
+# assuming one, so a naming mismatch never causes a silent no-op.
+if [ -f "$COMPOSE_FILE" ]
+then
+    echo "[i] docker-compose.yml already present at $COMPOSE_FILE"
+else
+    TEMPLATE_COMPOSE_FILE=$(find /opt/lunit/conf/insight-board -maxdepth 4 -iname 'template.docker-compose.yml' | head -n1)
 
-sed -i 's/dicom_gateway_mmg_default/insight-mmg-gateway_default/g' docker-compose.yml
+    if [ -z "$TEMPLATE_COMPOSE_FILE" ]
+    then
+        task_failed_fatal "Insight Board (no docker-compose.yml or template.docker-compose.yml found after extraction — check the tar contents)"
+    fi
+
+    mv "$TEMPLATE_COMPOSE_FILE" "$COMPOSE_FILE"
+
+    if [ ! -f "$COMPOSE_FILE" ]
+    then
+        task_failed_fatal "Insight Board (docker-compose.yml missing after mv)"
+    fi
+fi
+
+sed -i 's/# profiles: \[mmg\]/profiles: [mmg]/' "$COMPOSE_FILE"
+
+# networks.default.mmg_gateway.name:
+#   dicom_gateway_mmg_default  ->  insight-mmg-gateway_default
+sed -i 's/dicom_gateway_mmg_default/insight-mmg-gateway_default/g' "$COMPOSE_FILE"
+
+# Verify the substitution actually happened instead of assuming it
+# did — sed exits 0 even when nothing matched.
+if grep -q 'insight-mmg-gateway_default' "$COMPOSE_FILE"
+then
+    echo "[✓] docker-compose.yml network name fixed (insight-mmg-gateway_default)"
+else
+    echo "[✗] docker-compose.yml network name fix did NOT apply — check $COMPOSE_FILE manually"
+    FAILED+=("docker-compose.yml network name fix")
+fi
+
+if grep -q 'dicom_gateway_mmg_default' "$COMPOSE_FILE"
+then
+    echo "[!] Warning: 'dicom_gateway_mmg_default' still appears elsewhere in $COMPOSE_FILE"
+fi
 
 docker network create dicom-gateway-cxr_default >/dev/null 2>&1 || true
 
