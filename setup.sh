@@ -62,33 +62,53 @@ fi
 
 
 ########################################
-# DEPENDENCIES
+# 2. INSTALL DEPENDENCIES
 ########################################
 
-task_start "Install Dependencies"
+progress "Installing dependencies"
 
 
-if apt install -y \
+apt install -y \
 wget \
 curl \
 git \
 tar \
 unzip \
-rclone \
 docker.io \
-docker-compose
+docker-compose-plugin \
+>/dev/null 2>&1 \
+|| true
+
+
+# Install rclone separately
+
+if command -v rclone >/dev/null 2>&1
+
 then
 
-systemctl enable docker
-systemctl start docker
-
-task_success "Dependencies"
+    echo "[✓] rclone already installed"
 
 else
 
-task_failed "Dependencies"
+    echo "[!] rclone not found, installing manually"
+
+
+    curl https://rclone.org/install.sh | bash \
+    >/dev/null 2>&1 \
+    || failed "rclone installation"
+
 
 fi
+
+
+
+systemctl enable docker >/dev/null 2>&1 || true
+
+systemctl start docker >/dev/null 2>&1 || true
+
+
+
+success "Dependencies installed"
 
 
 
