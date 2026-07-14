@@ -1,95 +1,104 @@
 #!/bin/bash
 set -e
 
-echo "================================="
-echo " LUNIT AUTOMATIC INSTALL"
-echo "================================="
+echo "Starting Lunit installation"
 
-
-echo "[1/8] Updating system..."
-sudo apt update -y
-
-
-echo "[2/8] Installing tools..."
-sudo apt install -y git wget curl unzip rclone
-
-
-echo "[3/8] Connecting OneDrive..."
-
-if ! rclone listremotes | grep -q "onedrive:"; then
-
-    echo "OneDrive login required."
-    echo "A browser will open."
-    echo "Login with your Microsoft account."
-
-    rclone config
-
+# Become root check
+if [ "$EUID" -ne 0 ]; then
+    echo "Please run with sudo"
+    exit
 fi
 
 
-echo "[4/8] Downloading Lunit files..."
-
-mkdir -p ~/lunit-files
-
-rclone copy "onedrive:lunit" ~/lunit-files --progress
+# Update system
+apt update
+apt upgrade -y
 
 
-echo "Downloaded files:"
-ls -lh ~/lunit-files
+# Install dependencies
+apt install -y docker.io docker-compose wget curl tar unzip
 
 
-
-echo "[5/8] Installing Google Chrome..."
-
-wget -O chrome.deb \
-https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-
-sudo apt install -y ./chrome.deb
-
-rm chrome.deb
+# Install Chrome
+apt install -y /home/lunit/Downloads/google-chrome-stable_current_amd64.deb
 
 
+# Install AnyDesk
+apt install -y /home/lunit/Downloads/anydesk_7.1.0-1_amd64.deb
 
-echo "[6/8] Installing AnyDesk..."
 
-wget -O anydesk.deb \
-https://download.anydesk.com/linux/anydesk_7.1.0-1_amd64.deb
-
-sudo apt install -y ./anydesk.deb
-
-rm anydesk.deb
+# Install TeamViewer
+apt install -y /home/lunit/Downloads/teamviewer_15.70.4_amd64.deb
 
 
 
-echo "[7/8] Installing TeamViewer..."
+#################################
+# License Manager
+#################################
 
-wget -O teamviewer.deb \
-https://download.teamviewer.com/download/linux/teamviewer_amd64.deb
+cd /home/lunit/license-manager
 
-sudo apt install -y ./teamviewer.deb
+tar xvf license-manager-5.2.1_9.14.1.tar
 
-rm teamviewer.deb
+cd license-manager-5.2.1_9.14.1
 
-
-
-echo "[8/8] Starting Lunit installer..."
-
-cd ~/lunit-files
+bash setup.sh
 
 
-if [ -f "lunit.run" ]; then
 
-    chmod +x lunit.run
-    ./lunit.run
+#################################
+# Install MMG
+#################################
 
-else
+chmod +x LunitINSIGHTMMG-1.1.10.4-0_GB.run
 
-    echo "ERROR: lunit.run not found"
-    exit 1
+./LunitINSIGHTMMG-1.1.10.4-0_GB.run \
+--compute-type cpu \
+--timezone Asia/Kuala_Lumpur
 
-fi
 
 
-echo "================================="
-echo " INSTALLATION COMPLETE"
-echo "================================="
+#################################
+# Insight Board
+#################################
+
+mkdir -p /opt/lunit/conf/insight-board
+
+cp insight-board-1.2.3.tar \
+/opt/lunit/conf/insight-board/
+
+
+cd /opt/lunit/conf/insight-board
+
+tar xvf insight-board-1.2.3.tar
+
+
+for F in docker_images/*; do
+    docker load -i "$F"
+done
+
+
+rm -rf docker_images
+
+
+
+cp template.docker-compose.yml docker-compose.yml
+
+
+docker compose up -d
+
+
+
+#################################
+# Disable Wayland for AnyDesk
+#################################
+
+sed -i 's/#WaylandEnable=false/WaylandEnable=false/' \
+/etc/gdm3/custom.conf
+
+
+
+systemctl restart gdm3
+
+
+echo "Lunit installation complete"
