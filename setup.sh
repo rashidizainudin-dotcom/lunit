@@ -519,8 +519,14 @@ fi
 
 sed -i 's/# profiles: \[mmg\]/profiles: [mmg]/' "$COMPOSE_FILE"
 
-# networks.default.mmg_gateway.name:
-#   dicom_gateway_mmg_default  ->  insight-mmg-gateway_default
+# networks.mmg_gateway.name:
+#   dicom-gateway-mmg_default  ->  insight-mmg-gateway_default
+#
+# Note the real file uses hyphens (dicom-gateway-mmg_default), not
+# underscores (dicom_gateway_mmg_default) — confirmed from an actual
+# extracted docker-compose.yml. The underscore version below is kept
+# as a second pass in case a future template version reverts to it.
+sed -i 's/dicom-gateway-mmg_default/insight-mmg-gateway_default/g' "$COMPOSE_FILE"
 sed -i 's/dicom_gateway_mmg_default/insight-mmg-gateway_default/g' "$COMPOSE_FILE"
 
 # Verify the substitution actually happened instead of assuming it
@@ -533,9 +539,9 @@ else
     FAILED+=("docker-compose.yml network name fix")
 fi
 
-if grep -q 'dicom_gateway_mmg_default' "$COMPOSE_FILE"
+if grep -q -E 'dicom[-_]gateway[-_]mmg_default' "$COMPOSE_FILE"
 then
-    echo "[!] Warning: 'dicom_gateway_mmg_default' still appears elsewhere in $COMPOSE_FILE"
+    echo "[!] Warning: an old dicom-gateway-mmg_default / dicom_gateway_mmg_default reference still appears in $COMPOSE_FILE"
 fi
 
 docker network create dicom-gateway-cxr_default >/dev/null 2>&1 || true
