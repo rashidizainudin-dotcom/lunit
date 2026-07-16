@@ -175,7 +175,6 @@ PACKAGES=(
     unzip
     docker.io
     docker-compose
-    docker-compose-plugin
 )
 
 DEP_FAILED=0
@@ -195,9 +194,6 @@ do
             docker-compose)
                 VERSION_INFO=$(docker-compose --version 2>/dev/null)
                 ;;
-            docker-compose-plugin)
-                VERSION_INFO=$(docker compose version 2>/dev/null)
-                ;;
         esac
 
         if [ -n "$VERSION_INFO" ]
@@ -211,6 +207,39 @@ do
         DEP_FAILED=1
     fi
 done
+
+# The "docker compose" (v2, no hyphen) CLI subcommand ships under two
+# different package names depending on which apt repo you're using:
+#   - docker-compose-plugin  -> Docker's own official repo (download.docker.com)
+#   - docker-compose-v2      -> stock Ubuntu/Debian repos
+# Since this script only relies on the default Ubuntu repos (docker.io,
+# not docker-ce), docker-compose-plugin isn't available here and would
+# silently fail. Try both, in order, and stop at whichever works.
+COMPOSE_PLUGIN_CANDIDATES=(
+    docker-compose-plugin
+    docker-compose-v2
+)
+
+COMPOSE_PLUGIN_INSTALLED=0
+
+for CANDIDATE in "${COMPOSE_PLUGIN_CANDIDATES[@]}"
+do
+    if spin_run "Installing $CANDIDATE" apt install -y "$CANDIDATE"
+    then
+        COMPOSE_PLUGIN_INSTALLED=1
+        break
+    else
+        echo "[!] $CANDIDATE not available — trying next option"
+    fi
+done
+
+if [ "$COMPOSE_PLUGIN_INSTALLED" -eq 1 ] && docker compose version >/dev/null 2>&1
+then
+    echo "[✓] docker compose plugin — $(docker compose version 2>/dev/null)"
+else
+    echo "[✗] docker compose plugin FAILED (tried: ${COMPOSE_PLUGIN_CANDIDATES[*]})"
+    DEP_FAILED=1
+fi
 
 
 ########################################
