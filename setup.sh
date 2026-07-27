@@ -290,20 +290,70 @@ else
     echo ""
     echo "================================="
     echo " OneDrive Login Required"
-    echo " Browser will open"
-    echo " Login with your Microsoft account"
+    echo " A browser window will open."
+    echo " Everything else is automated — just complete the"
+    echo " Microsoft sign-in when the browser opens."
     echo "================================="
     echo ""
 
-    rclone config
+    # Automates the rclone config wizard exactly as it was previously
+    # answered by hand: new remote -> name "onedrive" -> storage type
+    # 42 -> accept defaults for client_id/client_secret/region/etc (blank
+    # = Enter) -> no advanced config -> yes to auto config -> [Microsoft
+    # login happens here] -> OneDrive type 1 -> drive/site selection 3 ->
+    # confirm y -> confirm y -> quit config menu.
+    #
+    # The Microsoft login itself is NOT a text prompt — rclone opens a
+    # browser and blocks internally waiting for the OAuth redirect. The
+    # remaining piped answers below (1 / 3 / y / y / q) just sit buffered
+    # on stdin until rclone resumes reading after that login completes,
+    # so no separate "press enter" step is needed for it.
+    #
+    # NOTE: the storage-type number (42) and drive-selection number (3)
+    # are specific to this rclone version and this OneDrive/SharePoint
+    # account's drive list. If rclone is upgraded or the account's drive
+    # list changes, re-run `rclone config` by hand once to confirm the
+    # sequence still matches, then update the heredoc below.
+    rclone config <<'RCLONE_EOF'
+n
+onedrive
+42
 
-    # FIX #2: explicitly wait for the person to confirm they've
-    # finished the browser-based auth flow before we try to verify
-    # the connection. rclone config normally blocks until you exit
-    # the interactive menu, but this makes the handoff explicit
-    # instead of silently racing ahead.
+
+
+
+n
+y
+1
+3
+y
+y
+q
+RCLONE_EOF
+
+    # Show exactly what got saved before checking if it actually works.
+    # If the storage-type/drive-selection numbers ever drift (rclone
+    # upgrade, account drive list changes, etc.), this makes the
+    # mismatch visible immediately — e.g. wrong "type" (not "onedrive"),
+    # or a config that's missing token/drive_id — instead of only
+    # surfacing later as an opaque failed `rclone lsd onedrive:` with
+    # no clue why.
     echo ""
-    read -rp "Press [Enter] once you have finished authenticating with OneDrive... "
+    echo "--- Saved rclone remote config ('onedrive') ---"
+    if rclone config show onedrive 2>&1
+    then
+        REMOTE_TYPE=$(rclone config get onedrive type 2>/dev/null)
+        if [ "$REMOTE_TYPE" != "onedrive" ]
+        then
+            echo "[!] Warning: remote 'onedrive' has type '$REMOTE_TYPE', expected 'onedrive'."
+            echo "    The storage-type number (42) may no longer point to OneDrive in this"
+            echo "    rclone version — re-run 'rclone config' by hand once to check."
+        fi
+    else
+        echo "[!] Warning: no config was saved under the name 'onedrive' at all —"
+        echo "    the wizard sequence likely didn't match this rclone version's prompts."
+    fi
+    echo "------------------------------------------------"
     echo ""
 
     if rclone lsd onedrive: >/dev/null 2>&1
